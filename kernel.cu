@@ -47,6 +47,14 @@ int main() {
         vector<vector<complex<float>>>(width,
             vector<complex<float>>(height, { 0.0f, 0.0f })));
 
+    // padded array to perform FFT
+    unsigned int padded_width = next_power_of_two(width);
+    unsigned int padded_height = next_power_of_two(height);
+
+    vector<vector<vector<complex<float>>>> slice_channels_padded(num_channels,
+        vector<vector<complex<float>>>(padded_width,
+            vector<complex<float>>(padded_height, { 0.0f, 0.0f })));
+
     cout << "Processing data..." << endl;
     // Read the data from the acquisitions
 
@@ -63,13 +71,6 @@ int main() {
             }
         }
 
-        // padded array to perform FFT
-        unsigned int padded_width = next_power_of_two(width);
-        unsigned int padded_height = next_power_of_two(height);
-
-        vector<vector<vector<complex<float>>>> slice_channels_padded(num_channels,
-            vector<vector<complex<float>>>(padded_width,
-                vector<complex<float>>(padded_height, { 0.0f, 0.0f })));
 
         for (unsigned int channel = 0; channel < num_channels; channel++) {
             slice_channels_padded[channel] = pad_vector(slice_channels[channel]);
@@ -82,14 +83,14 @@ int main() {
 
             // TODO rimuovere la costante 512
             complex<float>** data = new complex<float>*[512];
-            for (size_t i = 0; i < 512; ++i)
+
+            for (size_t i = 0; i < 512; ++i) {
                 data[i] = slice_channels_padded[channel][i].data();
+            }
 
 			FFT2D_GPU(data, 512, 1);
 
-            //_FFT2D(data, padded_height, padded_width, 1.0);
-
-            FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
+            //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
         }
         auto end = std::chrono::high_resolution_clock::now();
         auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -113,7 +114,6 @@ int main() {
         string magnitudeFile = "C:/Users/user/source/repos/FFT-CUDA/output/" + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
-
     } // end for slice
 
 

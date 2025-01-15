@@ -81,6 +81,22 @@ __global__ void FFT2D_GPU_COLONNE(thrust::complex<float>* data, thrust::complex<
     }
   }
 
+__global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<float>* temp, int n) {
+
+	int n2 = n / 2;
+    // Shift delle righe
+    for (int i = 0; i < n2; i++) {
+		temp[threadIdx.x*n + i + n2] = data[threadIdx.x * n + i];
+		temp[threadIdx.x * n + i] = data[threadIdx.x * n + i + n2];
+    }
+
+    // Shift delle colonne
+    for (int i = 0; i < n2; i++) {
+		data[i * n + threadIdx.x] = temp[(i + n2) * n + threadIdx.x];
+		data[(i + n2) * n + threadIdx.x] = temp[i * n + threadIdx.x];
+    }
+}
+
 bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
 
     int nlog2 = log2(n);
@@ -110,6 +126,10 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
 
     FFT2D_GPU_COLONNE <<<grid, block >>> (data_gpu, temp_gpu, n, nlog2, dir);
     cudaDeviceSynchronize();
+
+    //FFT SHIFT
+	FFT_SHIFT_GPU << <grid, block >> > (data_gpu, temp_gpu, n);
+	cudaDeviceSynchronize();
 
     cudaMemcpy(h_data, data_gpu, n * n * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
     cudaFree(data_gpu);
