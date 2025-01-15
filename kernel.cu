@@ -43,9 +43,9 @@ int main() {
 
     // 3D array to store the multi channel slice data
     // num_channels x width x height
-    vector<vector<vector<complex<double>>>> slice_channels(num_channels,
-        vector<vector<complex<double>>>(width,
-            vector<complex<double>>(height, { 0.0f, 0.0f })));
+    vector<vector<vector<complex<float>>>> slice_channels(num_channels,
+        vector<vector<complex<float>>>(width,
+            vector<complex<float>>(height, { 0.0f, 0.0f })));
 
     cout << "Processing data..." << endl;
     // Read the data from the acquisitions
@@ -67,9 +67,9 @@ int main() {
         unsigned int padded_width = next_power_of_two(width);
         unsigned int padded_height = next_power_of_two(height);
 
-        vector<vector<vector<complex<double>>>> slice_channels_padded(num_channels,
-            vector<vector<complex<double>>>(padded_width,
-                vector<complex<double>>(padded_height, { 0.0f, 0.0f })));
+        vector<vector<vector<complex<float>>>> slice_channels_padded(num_channels,
+            vector<vector<complex<float>>>(padded_width,
+                vector<complex<float>>(padded_height, { 0.0f, 0.0f })));
 
         for (unsigned int channel = 0; channel < num_channels; channel++) {
             slice_channels_padded[channel] = pad_vector(slice_channels[channel]);
@@ -81,7 +81,7 @@ int main() {
         for (unsigned int channel = 0; channel < num_channels; channel++) {
 
             // TODO rimuovere la costante 512
-            complex<double>** data = new complex<double>*[512];
+            complex<float>** data = new complex<float>*[512];
             for (size_t i = 0; i < 512; ++i)
                 data[i] = slice_channels_padded[channel][i].data();
 
@@ -97,7 +97,7 @@ int main() {
 
 
         // final vector to store the image
-        vector<vector<double>> mri_image(padded_width, vector<double>(padded_height, 0.0));
+        vector<vector<float>> mri_image(padded_width, vector<float>(padded_height, 0.0));
 
         // combine the coils
         combineCoils(slice_channels_padded, mri_image, padded_width, padded_height, num_channels);

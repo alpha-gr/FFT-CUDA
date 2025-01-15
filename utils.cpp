@@ -2,7 +2,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-void write_to_png(vector<vector<double>> data, string outfile) {
+void write_to_png(vector<vector<float>> data, string outfile) {
 
     char* filename = const_cast<char*>(outfile.c_str());
     int rows = data.size();
@@ -12,7 +12,7 @@ void write_to_png(vector<vector<double>> data, string outfile) {
     vector<unsigned char> imageData(rows * cols);
 
 	// trova la massima magnitudine per normalizzare i valori
-    double maxMagnitude = 0;
+    float maxMagnitude = 0;
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
             if (data[i][j] > maxMagnitude) {
@@ -40,18 +40,18 @@ void write_to_png(vector<vector<double>> data, string outfile) {
 }
 
 // Funzione per combinare i risultati dei coil in una singola immagine con RSS (Root Sum of Squares)
-void combineCoils(const vector<vector<vector<complex<double>>>>& coils,
-    vector<vector<double>>& image,
+void combineCoils(const vector<vector<vector<complex<float>>>>& coils,
+    vector<vector<float>>& image,
     int rows, int cols, int numCoils) {
     // coils è un vettore 3D: [coil][row][col]
     // image è l'immagine combinata in output
 
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
-            double sumSquares = 0.0;
+            float sumSquares = 0.0;
             for (int k = 0; k < numCoils; ++k) {
                 // Magnitudine del valore complesso per il coil k
-                double magnitude = abs(coils[k][i][j]);
+                float magnitude = abs(coils[k][i][j]);
                 sumSquares += magnitude * magnitude;
             }
             // Calcola il risultato RSS
@@ -70,11 +70,11 @@ int next_power_of_two(int N) {
     return power;
 }
 
-void rotate_90_degrees(vector<vector<double>>& data) {
+void rotate_90_degrees(vector<vector<float>>& data) {
     int n = data.size();
     for (int i = 0; i < n / 2; i++) {
         for (int j = i; j < n - i - 1; j++) {
-            double temp = data[i][j];
+            float temp = data[i][j];
             data[i][j] = data[n - j - 1][i];
             data[n - j - 1][i] = data[n - i - 1][n - j - 1];
             data[n - i - 1][n - j - 1] = data[j][n - i - 1];
@@ -83,12 +83,12 @@ void rotate_90_degrees(vector<vector<double>>& data) {
     }
 }
 
-vector<vector<complex<double>>> pad_vector(const vector<vector<complex<double>>>& data) {
+vector<vector<complex<float>>> pad_vector(const vector<vector<complex<float>>>& data) {
     int oldSize = data.size();
     int newSize = next_power_of_two(oldSize);
     int pad = (newSize - oldSize) / 2;
 
-    vector<vector<complex<double>>> padded(newSize, vector<complex<double>>(newSize, { 0.0, 0.0 }));
+    vector<vector<complex<float>>> padded(newSize, vector<complex<float>>(newSize, { 0.0, 0.0 }));
 
     for (int i = 0; i < oldSize; ++i) {
         for (int j = 0; j < oldSize; ++j) {
@@ -100,7 +100,7 @@ vector<vector<complex<double>>> pad_vector(const vector<vector<complex<double>>>
 }
 
 // Funzione per applicare la scala logaritmica ai valori di magnitudine
-void apply_scale(std::vector<std::vector<double>>& magnitudes) {
+void apply_scale(std::vector<std::vector<float>>& magnitudes) {
     for (auto& row : magnitudes) {
         for (auto& value : row) {
             value = sqrt(1 + value); // Applica la scala logaritmica
@@ -108,7 +108,7 @@ void apply_scale(std::vector<std::vector<double>>& magnitudes) {
     }
 }
 
-void flipVertical(std::vector<std::vector<double>>& image, int rows, int cols) {
+void flipVertical(std::vector<std::vector<float>>& image, int rows, int cols) {
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols / 2; ++j) {
             // Swap pixels across the vertical axis
@@ -117,7 +117,7 @@ void flipVertical(std::vector<std::vector<double>>& image, int rows, int cols) {
     }
 }
 
-void flipHorizontal(std::vector<std::vector<double>>& image, int rows, int cols) {
+void flipHorizontal(std::vector<std::vector<float>>& image, int rows, int cols) {
 	for (int i = 0; i < rows / 2; ++i) {
 		for (int j = 0; j < cols; ++j) {
 			// Swap pixels across the horizontal axis
