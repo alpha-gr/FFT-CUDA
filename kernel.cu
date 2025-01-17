@@ -1,4 +1,4 @@
-﻿
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdio.h>
@@ -58,7 +58,9 @@ int main() {
     cout << "Processing data..." << endl;
     // Read the data from the acquisitions
 
-    //num_slices = 110; // for testing purposes
+    
+
+    //num_slices = 10; // for testing purposes
     for (unsigned int slice = 0; slice < num_slices; slice++) {
 
         // Read the data for the current slice

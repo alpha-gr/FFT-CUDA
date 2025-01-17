@@ -60,9 +60,11 @@
     </Link>
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
-      <AdditionalDeps>C:/Program Files/HDF_Group/HDF5/1.14.5/include;C:/Users/user/ismrmrd/include;%(AdditionalDeps)</AdditionalDeps>
-      <Include>C:/Program Files/HDF_Group/HDF5/1.14.5/include;C:/Users/user/ismrmrd/include;$(ProjectDir)include;%(Include)</Include>
-      <UseHostInclude>true</UseHostInclude>
+      <AdditionalDeps>%(AdditionalDeps)</AdditionalDeps>
+      <Include>%(Include)</Include>
+      <UseHostInclude>false</UseHostInclude>
+      <GenerateLineInfo>false</GenerateLineInfo>
+      <GPUDebugInfo>true</GPUDebugInfo>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

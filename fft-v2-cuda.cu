@@ -141,7 +141,9 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
 			data[i][j] = std::complex<float>(h_data[i * n + j].real(), h_data[i * n + j].imag());
 		}
 	}
+    
 
+	delete[] h_data;
     return true;
 }
 
