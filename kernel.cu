@@ -93,6 +93,7 @@ int main() {
 			FFT2D_GPU(data, 512, 1);
 
             //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
+			delete[] data;
         }
         auto end = std::chrono::high_resolution_clock::now();
         auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);

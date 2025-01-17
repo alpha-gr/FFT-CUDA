@@ -3,6 +3,9 @@
 #include <complex>
 #include <math.h>
 #include <vector>
+#include <cuda.h>
+#include <cuda_runtime_api.h>
+#include <device_launch_parameters.h>
 
 #define FORWARD 1
 #define REVERSE -1
@@ -90,6 +93,9 @@ __global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<floa
 		temp[threadIdx.x * n + i] = data[threadIdx.x * n + i + n2];
     }
 
+	// Barriera per sincronizzare i thread
+    __syncthreads();
+
     // Shift delle colonne
     for (int i = 0; i < n2; i++) {
 		data[i * n + threadIdx.x] = temp[(i + n2) * n + threadIdx.x];
@@ -132,6 +138,7 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
 	cudaDeviceSynchronize();
 
     cudaMemcpy(h_data, data_gpu, n * n * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
+	cudaDeviceSynchronize();
     cudaFree(data_gpu);
     cudaFree(temp_gpu);
 
