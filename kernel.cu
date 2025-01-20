@@ -41,11 +41,10 @@ int main() {
     cout << "Number of samples: " << num_samples << endl;
     cout << "Number of slices: " << num_slices << endl;
 
-    // padded array to perform FFT
+    // padded array size to perform FFT
     unsigned int size = next_power_of_two(num_samples);
 
     cout << "Reading data..." << endl;
-    // Read the data from the acquisitions
 
     thrust::complex<float>* data;
 
