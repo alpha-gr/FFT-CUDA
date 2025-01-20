@@ -120,26 +120,16 @@ __global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<floa
     }
 }
 
-bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
+bool FFT2D_GPU(thrust::complex<float>* data, int n, short dir) {
 
     int nlog2 = log2(n);
-
-    // Alloca memoria per una matrice unidimensionale di thrust::complex<float>
-    thrust::complex<float>* h_data = new thrust::complex<float>[n * n];
-
-    // Copia i dati dalla matrice bidimensionale di std::complex<float> alla matrice unidimensionale di thrust::complex<float>
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            h_data[i * n + j] = thrust::complex<float>(data[i][j].real(), data[i][j].imag());
-        }
-    }
     
 
     thrust::complex<float>* data_gpu;
 	thrust::complex<float>* temp_gpu;
     cudaMalloc((void**)&data_gpu, n * n * sizeof(thrust::complex<float>));
     cudaMalloc((void**)&temp_gpu, n * n * sizeof(thrust::complex<float>));
-    cudaMemcpy(data_gpu, h_data, n * n * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice);
+    cudaMemcpy(data_gpu, data, n * n * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice);
 
     dim3 grid(1);
     dim3 block(n);
@@ -151,7 +141,7 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
 	FFT_SHIFT_GPU << <grid, block >> > (data_gpu, temp_gpu, n);
 	cudaDeviceSynchronize();
 
-    cudaMemcpy(h_data, data_gpu, n * n * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
+    cudaMemcpy(data, data_gpu, n * n * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
 	cudaDeviceSynchronize();
     cudaFree(data_gpu);
     cudaFree(temp_gpu);
@@ -159,12 +149,10 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
     // converto nuovamente i dati
 	for (int i = 0; i < n; ++i) {
 		for (int j = 0; j < n; ++j) {
-			data[i][j] = std::complex<float>(h_data[i * n + j].real(), h_data[i * n + j].imag());
+			data[i*n+j] = std::complex<float>(data[i * n + j].real(), data[i * n + j].imag());
 		}
 	}
-    
 
-	delete[] h_data;
     return true;
 }
 

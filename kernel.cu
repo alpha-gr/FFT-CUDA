@@ -1,4 +1,5 @@
 
+#pragma once
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdio.h>
@@ -10,6 +11,10 @@
 #include "ismrmrd/xml.h"
 #include "utils.h"
 #include "fft-v2-cuda.cuh"
+#include "thrust/complex.h"
+
+#define index(slice, ch, row, col, size, n_ch) (n_ch * size * size * slice) + (size * size * ch) + (size * row) + col
+
 
 using namespace std;
 
@@ -31,69 +36,50 @@ int main() {
     unsigned int num_slices = num_acquisitions / num_samples;
 
     // width and height of the slice
-    unsigned int width = num_samples;
-    unsigned int height = num_samples;
 
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
     cout << "Number of slices: " << num_slices << endl;
 
-    cout << "width: " << width << endl;
-    cout << "height: " << height << endl;
-
-    // 3D array to store the multi channel slice data
-    // num_channels x width x height
-    vector<vector<vector<complex<float>>>> slice_channels(num_channels,
-        vector<vector<complex<float>>>(width,
-            vector<complex<float>>(height, { 0.0f, 0.0f })));
-
     // padded array to perform FFT
-    unsigned int padded_width = next_power_of_two(width);
-    unsigned int padded_height = next_power_of_two(height);
-
-    vector<vector<vector<complex<float>>>> slice_channels_padded(num_channels,
-        vector<vector<complex<float>>>(padded_width,
-            vector<complex<float>>(padded_height, { 0.0f, 0.0f })));
+    unsigned int size = next_power_of_two(size);
 
     cout << "Processing data..." << endl;
     // Read the data from the acquisitions
 
-    
+    thrust::complex<float>* data;
 
-    //num_slices = 10; // for testing purposes
-    for (unsigned int slice = 0; slice < num_slices; slice++) {
+	data = (thrust::complex<float>*)malloc(size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
 
-        // Read the data for the current slice
-        for (unsigned int j = 0; j < num_samples; j++) {
-            d.readAcquisition(slice * num_samples + j, acq);
-            for (unsigned int channel = 0; channel < num_channels; channel++) {
-                for (unsigned int i = 0; i < num_samples; i++) {
-                    slice_channels[channel][j][i] = acq.data(i, channel);
+	memset(data, 0, size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
+
+    //reading all the data with padding
+
+	complex<float> tmp = complex<float>(0.0, 0.0);
+	int pad = (size - num_samples) / 2;
+
+    for (int slice = 0; slice < num_slices; slice++) {
+        for (int row = 0; row < num_samples; row++) {
+			d.readAcquisition(slice * num_samples + row, acq);
+            for (int channel = 0; channel < num_channels; channel++) {
+                for (int col = 0; col < num_samples; col++) {
+                    tmp = acq.data(col, channel);
+					data[index(slice, channel, row+pad, col+pad, size, num_channels)] = thrust::complex<float>(tmp.real(), tmp.imag());
                 }
             }
         }
+    
+    }
 
-
-        for (unsigned int channel = 0; channel < num_channels; channel++) {
-            slice_channels_padded[channel] = pad_vector(slice_channels[channel]);
-        }
-
+    for (int slice = 0; slice < num_slices; slice++) {
 
         // 2D IFFT
         auto start = std::chrono::high_resolution_clock::now();
-        for (unsigned int channel = 0; channel < num_channels; channel++) {
+        for (int channel = 0; channel < num_channels; channel++) {
 
-            // TODO rimuovere la costante 512
-            complex<float>** data = new complex<float>*[512];
-
-            for (size_t i = 0; i < 512; ++i) {
-                data[i] = slice_channels_padded[channel][i].data();
-            }
-
-			FFT2D_GPU(data, 512, 1);
+			FFT2D_GPU( data + index(slice, channel, 0, 0, size, num_channels), 512, 1);
 
             //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
-			delete[] data;
         }
         auto end = std::chrono::high_resolution_clock::now();
         auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -101,10 +87,21 @@ int main() {
 
 
         // final vector to store the image
-        vector<vector<float>> mri_image(padded_width, vector<float>(padded_height, 0.0));
+        vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
 
         // combine the coils
-        combineCoils(slice_channels_padded, mri_image, padded_width, padded_height, num_channels);
+        for (int row = 0; row < size; ++row) {
+            for (int col = 0; col < size; ++col) {
+                float sumSquares = 0.0;
+                for (int ch = 0; ch < num_channels; ++ch) {
+                    // Magnitudine del valore complesso per il coil k
+                    float magnitude = abs(data[index(slice,ch,row,col,size,num_channels)]);
+                    sumSquares += magnitude * magnitude;
+                }
+                // Calcola il risultato RSS
+                mri_image[row][col] = sqrt(sumSquares);
+            }
+        }
 
 
         // rotate the image by 90 degrees

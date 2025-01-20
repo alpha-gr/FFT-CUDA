@@ -3,6 +3,6 @@
 #include <vector>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <thrust/complex.h>
 
-bool FFT2D_GPU(std::complex<float>** data, int n, short dir);
-void FFT_SHIFT(std::vector<std::vector<std::complex<float>>>& array, int rows, int cols);
+bool FFT2D_GPU(thrust::complex<float>* data, int n, short dir);
