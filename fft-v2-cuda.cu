@@ -84,6 +84,23 @@ __global__ void FFT2D_GPU_COLONNE(thrust::complex<float>* data, thrust::complex<
     }
   }
 
+__global__ void FFT2D_GPU_COMPUTE(thrust::complex<float>* data, thrust::complex<float>* temp, int n, int nlog2, short dir) {
+
+	// FFT delle righe
+    FFT1D(dir, data + (threadIdx.x * n), nlog2);
+    for (int i = 0; i < n; i++) {
+        temp[i * n + threadIdx.x] = data[threadIdx.x * n + i];
+    }
+
+    __syncthreads();
+
+	// FFT delle colonne
+    FFT1D(dir, temp + (threadIdx.x * n), nlog2);
+    for (int i = 0; i < n; i++) {
+        data[i * n + threadIdx.x] = temp[threadIdx.x * n + i];
+    }
+}
+
 __global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<float>* temp, int n) {
 
 	int n2 = n / 2;
@@ -127,10 +144,7 @@ bool FFT2D_GPU(std::complex<float>** data, int n, short dir) {
     dim3 grid(1);
     dim3 block(n);
 
-    FFT2D_GPU_RIGHE <<<grid, block >>> (data_gpu, temp_gpu, n, nlog2, dir);
-    cudaDeviceSynchronize();
-
-    FFT2D_GPU_COLONNE <<<grid, block >>> (data_gpu, temp_gpu, n, nlog2, dir);
+    FFT2D_GPU_COMPUTE <<<grid, block >>> (data_gpu, temp_gpu, n, nlog2, dir);
     cudaDeviceSynchronize();
 
     //FFT SHIFT
