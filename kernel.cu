@@ -1,5 +1,6 @@
 
 #pragma once
+#include "thrust/complex.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdio.h>
@@ -11,7 +12,6 @@
 #include "ismrmrd/xml.h"
 #include "utils.h"
 #include "fft-v2-cuda.cuh"
-#include "thrust/complex.h"
 
 #define index(slice, ch, row, col, size, n_ch) (n_ch * size * size * slice) + (size * size * ch) + (size * row) + col
 
@@ -42,9 +42,9 @@ int main() {
     cout << "Number of slices: " << num_slices << endl;
 
     // padded array to perform FFT
-    unsigned int size = next_power_of_two(size);
+    unsigned int size = next_power_of_two(num_samples);
 
-    cout << "Processing data..." << endl;
+    cout << "Reading data..." << endl;
     // Read the data from the acquisitions
 
     thrust::complex<float>* data;
@@ -70,6 +70,8 @@ int main() {
         }
     
     }
+
+	cout << "Processing data..." << endl;
 
     for (int slice = 0; slice < num_slices; slice++) {
 
