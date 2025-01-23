@@ -7,11 +7,19 @@
 #include <cuda_runtime_api.h>
 #include <device_launch_parameters.h>
 
+#define rowIndex (num_channels * size * size * blockIdx.y) + (size * size * blockIdx.x) + (size * threadIdx.x)
+#define sliceIndex (num_channels * size * size * blockIdx.y) + (size * size * blockIdx.x)
+
 #define FORWARD 1
 #define REVERSE -1
 
-bool MYpowerOf2(int n) {
-    return n > 0 && (n & (n - 1)) == 0;
+#define CHECK(call){\
+    const cudaError_t error = call;\
+    if (error != cudaSuccess) {\
+        printf("Error: %s:%d, ", __FILE__, __LINE__);\
+        printf("code:%d, reason: %s\n", error,\
+            cudaGetErrorString(error));\
+    }\
 }
 
 __device__ void FFT1D(short dir, thrust::complex<float>* data, int length) {
@@ -70,40 +78,64 @@ __device__ void FFT1D(short dir, thrust::complex<float>* data, int length) {
 
 }
 
-__global__ void FFT2D_GPU_RIGHE(thrust::complex<float>* data, thrust::complex<float>* temp, int n, int nlog2, short dir) {
-    FFT1D(dir, data +(threadIdx.x*n), nlog2);
-    for(int i = 0; i < n; i++) {
-        temp[i*n + threadIdx.x] = data[threadIdx.x*n + i];
-    }
-}
+__global__ void FFT2D_GPU_COMPUTE(thrust::complex<float>* data, int size, int nlog2, int num_slices, int num_channels, short dir) {
 
-__global__ void FFT2D_GPU_COLONNE(thrust::complex<float>* data, thrust::complex<float>* temp, int n, int nlog2, short dir) {
-    FFT1D(dir, temp + (threadIdx.x*n), nlog2);
-    for(int i = 0; i < n; i++) {
-        data[i*n + threadIdx.x] = temp[threadIdx.x*n + i];
-    }
-  }
-
-__global__ void FFT2D_GPU_COMPUTE(thrust::complex<float>* data, thrust::complex<float>* temp, int n, int nlog2, short dir) {
-
+    int i, j;
 	// FFT delle righe
-    FFT1D(dir, data + (threadIdx.x * n), nlog2);
-    for (int i = 0; i < n; i++) {
-        temp[i * n + threadIdx.x] = data[threadIdx.x * n + i];
-    }
+    FFT1D(dir, data + rowIndex, nlog2);
 
     __syncthreads();
 
-	// FFT delle colonne
-    FFT1D(dir, temp + (threadIdx.x * n), nlog2);
-    for (int i = 0; i < n; i++) {
-        data[i * n + threadIdx.x] = temp[threadIdx.x * n + i];
+    thrust::complex<float> tmp;
+    // solo il primo thread scambia le righe con le colonne elemento per elemento
+    if (threadIdx.x == 0) {
+		for (i = 0; i < size; i++) {
+			for (j = i; j < size; j++) {
+                tmp = data[sliceIndex + i * size + j];
+				data[sliceIndex + i * size + j] = data[sliceIndex + j * size + i];
+				data[sliceIndex + j * size + i] = tmp;
+			}
+		}
     }
+	__syncthreads();
+    //FFT delle colonne
+	FFT1D(dir, data + rowIndex, nlog2);
+
+	__syncthreads();
+
+    //shift delle righe e delle colonne
+  //  if (threadIdx.x < size / 2) {
+		//for (i = 0; i < size / 2; i++) {
+		//	tmp = data[sliceIndex + (threadIdx.x * size) + i];
+  //          data[sliceIndex + (threadIdx.x * size) + i] = data[sliceIndex + ((threadIdx.x + (size / 2)) * size) + i + (size / 2)];
+  //          data[sliceIndex + ((threadIdx.x + (size / 2)) * size) + i + (size / 2)] = tmp;
+		//}
+  //  }
+  //  else {
+  //      for (i = 0; i < size/2; i++) {
+		//	tmp = data[sliceIndex + (i * size) + threadIdx.x];
+		//	data[sliceIndex + (i * size) + threadIdx.x] = data[sliceIndex + ((i + (size / 2)) * size) + threadIdx.x - (size / 2)];
+		//	data[sliceIndex + ((i + (size / 2)) * size) + threadIdx.x - (size / 2)] = tmp;
+  //      }
+  //  }
+
+    for (int i = 0; i < size / 2; i++) {
+        //int dstRow = ((threadIdx.x + size / 2) % size);
+        //int dstCol = ((i + size / 2) % size);
+
+        tmp = data[sliceIndex + (threadIdx.x * size) + i];
+        data[sliceIndex + (threadIdx.x * size) + i] =
+            data[sliceIndex + (((threadIdx.x + size / 2) % size) * size) + ((i + size / 2) % size)];
+        data[sliceIndex + (((threadIdx.x + size / 2) % size) * size) + ((i + size / 2) % size)] = tmp;
+    }
+
+    __syncthreads();
 }
 
 __global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<float>* temp, int n) {
 
 	int n2 = n / 2;
+    thrust::complex<float> tmp;
     // Shift delle righe
     for (int i = 0; i < n2; i++) {
 		temp[threadIdx.x*n + i + n2] = data[threadIdx.x * n + i];
@@ -120,54 +152,25 @@ __global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<floa
     }
 }
 
-bool FFT2D_GPU(thrust::complex<float>* data, int n, short dir) {
+bool FFT2D_GPU(thrust::complex<float>* data, int size, int num_channels, int num_slices, short dir) {
 
-    int nlog2 = log2(n);
-    
+    int nlog2 = log2(size);
+    unsigned int data_size = num_slices * num_channels * size * size * sizeof(thrust::complex<float>);
 
     thrust::complex<float>* data_gpu;
-	thrust::complex<float>* temp_gpu;
-    cudaMalloc((void**)&data_gpu, n * n * sizeof(thrust::complex<float>));
-    cudaMalloc((void**)&temp_gpu, n * n * sizeof(thrust::complex<float>));
-    cudaMemcpy(data_gpu, data, n * n * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice);
+    CHECK(cudaMalloc((void**)&data_gpu, data_size));
+	
+    CHECK(cudaMemcpy(data_gpu, data, data_size, cudaMemcpyHostToDevice));
 
-    dim3 grid(1);
-    dim3 block(n);
+    dim3 grid(num_channels, num_slices);
+    dim3 block(size);
 
-    FFT2D_GPU_COMPUTE <<<grid, block >>> (data_gpu, temp_gpu, n, nlog2, dir);
-    cudaDeviceSynchronize();
+    FFT2D_GPU_COMPUTE <<<grid, block>>> (data_gpu, size, nlog2, num_slices, num_channels, dir);
+    CHECK(cudaDeviceSynchronize());
 
-    //FFT SHIFT
-	FFT_SHIFT_GPU << <grid, block >> > (data_gpu, temp_gpu, n);
-	cudaDeviceSynchronize();
-
-    cudaMemcpy(data, data_gpu, n * n * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
-	cudaDeviceSynchronize();
-    cudaFree(data_gpu);
-    cudaFree(temp_gpu);
-
-    // converto nuovamente i dati
-	for (int i = 0; i < n; ++i) {
-		for (int j = 0; j < n; ++j) {
-			data[i*n+j] = std::complex<float>(data[i * n + j].real(), data[i * n + j].imag());
-		}
-	}
+    CHECK(cudaMemcpy(data, data_gpu, data_size, cudaMemcpyDeviceToHost));
+    CHECK(cudaDeviceSynchronize());
+    CHECK(cudaFree(data_gpu));
 
     return true;
-}
-
-
-void FFT_SHIFT(std::vector<std::vector<std::complex<float>>>& array, int rows, int cols) {
-    // Shift delle righe
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols / 2; ++j) {
-            std::swap(array[i][j], array[i][j + cols / 2]);
-        }
-    }
-    // Shift delle colonne
-    for (int i = 0; i < rows / 2; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            std::swap(array[i][j], array[i + rows / 2][j]);
-        }
-    }
 }

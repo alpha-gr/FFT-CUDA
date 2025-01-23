@@ -12,6 +12,13 @@
 #include "ismrmrd/xml.h"
 #include "utils.h"
 #include "fft-v2-cuda.cuh"
+#include <time.h>
+
+double cpuSecond() {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
+}
 
 #define index(slice, ch, row, col, size, n_ch) (n_ch * size * size * slice) + (size * size * ch) + (size * row) + col
 
@@ -34,9 +41,8 @@ int main() {
     unsigned int num_channels = acq.active_channels();
     unsigned int num_samples = acq.number_of_samples();
     unsigned int num_slices = num_acquisitions / num_samples;
-
-    // width and height of the slice
-
+	num_slices = num_slices / 4;
+    
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
     cout << "Number of slices: " << num_slices << endl;
@@ -47,9 +53,7 @@ int main() {
     cout << "Reading data..." << endl;
 
     thrust::complex<float>* data;
-
 	data = (thrust::complex<float>*)malloc(size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
-
 	memset(data, 0, size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
 
     //reading all the data with padding
@@ -63,7 +67,7 @@ int main() {
             for (int channel = 0; channel < num_channels; channel++) {
                 for (int col = 0; col < num_samples; col++) {
                     tmp = acq.data(col, channel);
-					data[index(slice, channel, row+pad, col+pad, size, num_channels)] = thrust::complex<float>(tmp.real(), tmp.imag());
+					data[index(slice, channel, (row+pad), (col+pad), size, num_channels)] = thrust::complex<float>(tmp.real(), tmp.imag());
                 }
             }
         }
@@ -72,22 +76,20 @@ int main() {
 
 	cout << "Processing data..." << endl;
 
-    for (int slice = 0; slice < num_slices; slice++) {
+	unsigned int data_size = size * size * num_slices * num_channels;
 
-        // 2D IFFT
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int channel = 0; channel < num_channels; channel++) {
+    double iStart = cpuSecond();
 
-			FFT2D_GPU( data + index(slice, channel, 0, 0, size, num_channels), 512, 1);
+    FFT2D_GPU(data, size, num_channels, num_slices/2, 1);
+	FFT2D_GPU(data + (data_size / 2), size, num_channels, num_slices / 2, 1);
 
-            //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Tempo impiegato: " << duration_ms.count() << " millisecondi" << std::endl;
+    double iElaps = cpuSecond() - iStart;
 
+	cout << "Elapsed time: " << iElaps << " s" << endl;
 
-        // final vector to store the image
+	for (int slice = 0; slice < num_slices; slice++) {
+
+		// final vector to store the image
         vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
 
         // combine the coils
@@ -95,15 +97,14 @@ int main() {
             for (int col = 0; col < size; ++col) {
                 float sumSquares = 0.0;
                 for (int ch = 0; ch < num_channels; ++ch) {
-                    // Magnitudine del valore complesso per il coil k
-                    float magnitude = abs(data[index(slice,ch,row,col,size,num_channels)]);
+                    // Magnitudine del valore complesso
+                    float magnitude = abs(data[index(slice, ch, row, col, size, num_channels)]);
                     sumSquares += magnitude * magnitude;
                 }
                 // Calcola il risultato RSS
                 mri_image[row][col] = sqrt(sumSquares);
             }
         }
-
 
         // rotate the image by 90 degrees
         rotate_90_degrees(mri_image);
@@ -115,7 +116,8 @@ int main() {
         string magnitudeFile = "C:/Users/user/source/repos/FFT-CUDA/output/" + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
-    } // end for slice
+	}
+
 
 
     return 0;
