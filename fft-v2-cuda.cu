@@ -10,6 +10,7 @@
 #define rowIndex (num_channels * size * size * blockIdx.y) + (size * size * blockIdx.x) + (size * threadIdx.x)
 #define sliceIndex (num_channels * size * size * blockIdx.y) + (size * size * blockIdx.x)
 
+
 #define FORWARD 1
 #define REVERSE -1
 
@@ -96,60 +97,31 @@ __global__ void FFT2D_GPU_COMPUTE(thrust::complex<float>* data, int size, int nl
 				data[sliceIndex + j * size + i] = tmp;
 			}
 		}
-    }
+	}
+	__syncthreads();
+	//// calcolo matrice trasposta IN PARALLELO
+ //   for (i = threadIdx.x + 1; i < size; i++ ) {
+	//	tmp = data[rowIndex + i];
+	//	data[rowIndex + i] = data[sliceIndex + (i * size) + threadIdx.x];
+	//	data[sliceIndex + (i * size) + threadIdx.x] = tmp;
+ //   }
 	__syncthreads();
     //FFT delle colonne
 	FFT1D(dir, data + rowIndex, nlog2);
 
 	__syncthreads();
 
-    //shift delle righe e delle colonne
-  //  if (threadIdx.x < size / 2) {
-		//for (i = 0; i < size / 2; i++) {
-		//	tmp = data[sliceIndex + (threadIdx.x * size) + i];
-  //          data[sliceIndex + (threadIdx.x * size) + i] = data[sliceIndex + ((threadIdx.x + (size / 2)) * size) + i + (size / 2)];
-  //          data[sliceIndex + ((threadIdx.x + (size / 2)) * size) + i + (size / 2)] = tmp;
-		//}
-  //  }
-  //  else {
-  //      for (i = 0; i < size/2; i++) {
-		//	tmp = data[sliceIndex + (i * size) + threadIdx.x];
-		//	data[sliceIndex + (i * size) + threadIdx.x] = data[sliceIndex + ((i + (size / 2)) * size) + threadIdx.x - (size / 2)];
-		//	data[sliceIndex + ((i + (size / 2)) * size) + threadIdx.x - (size / 2)] = tmp;
-  //      }
-  //  }
-
+	//// FREQUENCY SHIFT (scambio dei quadranti)
+    int dstRow, dstCol;
     for (int i = 0; i < size / 2; i++) {
-        //int dstRow = ((threadIdx.x + size / 2) % size);
-        //int dstCol = ((i + size / 2) % size);
-
-        tmp = data[sliceIndex + (threadIdx.x * size) + i];
-        data[sliceIndex + (threadIdx.x * size) + i] =
-            data[sliceIndex + (((threadIdx.x + size / 2) % size) * size) + ((i + size / 2) % size)];
-        data[sliceIndex + (((threadIdx.x + size / 2) % size) * size) + ((i + size / 2) % size)] = tmp;
+        dstRow = (threadIdx.x + size / 2) % size;
+        dstCol = (i + size / 2) % size;
+        tmp = data[rowIndex + i];
+        data[rowIndex + i] = data[sliceIndex + (dstRow * size) + dstCol];
+        data[sliceIndex + (dstRow * size) + dstCol] = tmp;
     }
 
     __syncthreads();
-}
-
-__global__ void FFT_SHIFT_GPU(thrust::complex<float>* data, thrust::complex<float>* temp, int n) {
-
-	int n2 = n / 2;
-    thrust::complex<float> tmp;
-    // Shift delle righe
-    for (int i = 0; i < n2; i++) {
-		temp[threadIdx.x*n + i + n2] = data[threadIdx.x * n + i];
-		temp[threadIdx.x * n + i] = data[threadIdx.x * n + i + n2];
-    }
-
-	// Barriera per sincronizzare i thread
-    __syncthreads();
-
-    // Shift delle colonne
-    for (int i = 0; i < n2; i++) {
-		data[i * n + threadIdx.x] = temp[(i + n2) * n + threadIdx.x];
-		data[(i + n2) * n + threadIdx.x] = temp[i * n + threadIdx.x];
-    }
 }
 
 bool FFT2D_GPU(thrust::complex<float>* data, int size, int num_channels, int num_slices, short dir) {

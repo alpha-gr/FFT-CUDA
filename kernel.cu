@@ -25,11 +25,15 @@ double cpuSecond() {
 
 using namespace std;
 
-int main() {
+int main(int argc, char* argv[]) {
 
-    cout << "Lettura del file..." << endl;
+	if (argc != 3) {
+		cout << "Usage: " << argv[0] << " <input_file> <output_folder>" << endl;
+		return 1;
+	}
 
-    string datafile = "C:/Users/user/source/repos/FFT/mridata/52c2fd53-d233-4444-8bfd-7c454240d314.h5";
+	string datafile = argv[1];
+	string output_folder = argv[2];
 
     ISMRMRD::Dataset d(datafile.c_str(), "dataset", false);
 
@@ -41,7 +45,7 @@ int main() {
     unsigned int num_channels = acq.active_channels();
     unsigned int num_samples = acq.number_of_samples();
     unsigned int num_slices = num_acquisitions / num_samples;
-	num_slices = num_slices / 4;
+	//num_slices = 16;
     
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -80,6 +84,7 @@ int main() {
 
     double iStart = cpuSecond();
 
+	//FFT2D_GPU(data, size, num_channels, num_slices, 1);
     FFT2D_GPU(data, size, num_channels, num_slices/2, 1);
 	FFT2D_GPU(data + (data_size / 2), size, num_channels, num_slices / 2, 1);
 
@@ -113,7 +118,7 @@ int main() {
         //flipVertical(mri_image, padded_width, padded_height);
         //flipHorizontal(mri_image, padded_width, padded_height);
 
-        string magnitudeFile = "C:/Users/user/source/repos/FFT-CUDA/output/" + to_string(slice) + ".png";
+        string magnitudeFile = output_folder + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
 	}
