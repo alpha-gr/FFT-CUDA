@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
     unsigned int num_channels = acq.active_channels();
     unsigned int num_samples = acq.number_of_samples();
     unsigned int num_slices = num_acquisitions / num_samples;
-	//num_slices = 16;
+	num_slices = 2;
     
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -111,7 +111,7 @@ int main(int argc, char* argv[]) {
         }
 
         // rotate the image by 90 degrees
-        rotate_90_degrees(mri_image);
+        //rotate_90_degrees(mri_image);
 
         // flip 
         //flipVertical(mri_image, padded_width, padded_height);
