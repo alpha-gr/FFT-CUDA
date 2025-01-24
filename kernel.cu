@@ -89,7 +89,6 @@ int main(int argc, char* argv[]) {
 	FFT2D_GPU(data + (data_size / 2), size, num_channels, num_slices / 2, 1);
 
     double iElaps = cpuSecond() - iStart;
-
 	cout << "Elapsed time: " << iElaps << " s" << endl;
 
 	for (int slice = 0; slice < num_slices; slice++) {
