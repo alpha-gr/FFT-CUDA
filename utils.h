@@ -18,3 +18,4 @@ vector<vector<complex<float>>> pad_vector(const vector<vector<complex<float>>>& 
 void apply_scale(std::vector<std::vector<float>>& magnitudes);
 void flipVertical(std::vector<std::vector<float>>& image, int rows, int cols);
 void flipHorizontal(std::vector<std::vector<float>>& image, int rows, int cols);
+void write_to_bmp(vector<vector<float>> data, string outfile);
