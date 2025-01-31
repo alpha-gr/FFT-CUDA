@@ -168,48 +168,23 @@ __global__ void kernel_freq_shift(thrust::complex<float>* data) {
 	int new_row = (row + size2_gpu) % size_gpu;
 	int new_col = (col + size2_gpu) % size_gpu;
 
-	tmp = data[blockIdx.z * sizeSq_gpu + row * size_gpu + col];
-	data[blockIdx.z * sizeSq_gpu + row * size_gpu + col] = data[blockIdx.z * sizeSq_gpu + new_row * size_gpu + new_col];
-	data[blockIdx.z * sizeSq_gpu + new_row * size_gpu + new_col] = tmp;
+	tmp = data[row * size_gpu + col];
+	data[row * size_gpu + col] = data[new_row * size_gpu + new_col];
+	data[new_row * size_gpu + new_col] = tmp;
 
 }
 
-#define id threadIdx.x
-#define warpId threadIdx.y
-#define elementId (warpId*16+id)
-#define rowId blockIdx.x
-#define channelIndex_gpu (blockIdx.y * sizeSq_gpu)
-#define FULL_MASK 0xFFFFFFFF
-__global__ void kernel_shift(thrust::complex<float>* data) {
-    /*d[rid*size+id+wid*16]
-    d[rid+size2 *size  + size2 + id + wid*16]
-
-    d[rid*size + size2 + id + wid*16]
-    d[rid+size2 + size + id + wid*16]*/
-
-    int index;
-    thrust::complex<float> tmp;
-
-    if (id < 16) index = channelIndex_gpu + (rowId)*size_gpu + elementId;
-    else         index = channelIndex_gpu + (rowId + size2_gpu) * size_gpu + size2_gpu + elementId - 16;
-    tmp = data[index];
-    tmp.real(__shfl_sync(FULL_MASK, tmp.real(), id + 16, 32));
-    tmp.imag(__shfl_sync(FULL_MASK, tmp.imag(), id + 16, 32));
-    data[index] = tmp;
-
-    if (id < 16) index = channelIndex_gpu + (rowId)*size_gpu + size2_gpu + elementId;
-    else         index = channelIndex_gpu + (rowId + size2_gpu) * size_gpu + elementId - 16;
-    tmp = data[index];
-    tmp.real(__shfl_sync(FULL_MASK, tmp.real(), id + 16, 32));
-    tmp.imag(__shfl_sync(FULL_MASK, tmp.imag(), id + 16, 32));
-    data[index] = tmp;
-
+__global__ void kernel_sum(thrust::complex<float>* data) {
+	float sum = 0.0;
+	float magnitude = 0.0;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	for (int ch = 0; ch < numChannels_gpu; ch++) {
+		magnitude = thrust::abs(data[ch * sizeSq_gpu + row * size_gpu + col]);
+		sum += magnitude * magnitude;
+	}
+	data[row * size_gpu + col] = sqrt(sum);
 }
-#undef id
-#undef warpId
-#undef elementId
-#undef rowId
-#undef channelIndex_gpu
 
 int main(int argc, char* argv[]) {
 
@@ -230,7 +205,7 @@ int main(int argc, char* argv[]) {
 
     // width and height of the slice
 
-    //num_slices = 16;
+    num_slices = 16;
 
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -244,8 +219,6 @@ int main(int argc, char* argv[]) {
     // Read the data from the acquisitions
 
     thrust::complex<float>* data;
-
-	//data = (thrust::complex<float>*)malloc(size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
 
     cudaMallocHost((void**)&data, num_slices*num_channels * size * size * sizeof(thrust::complex<float>));
 
@@ -284,19 +257,6 @@ int main(int argc, char* argv[]) {
     cudaMemcpyToSymbol(samplesPerThread_gpu, &constant_tmp, sizeof(int));
     constant_tmp = log2(size/THREADS_PER_ROW);
     cudaMemcpyToSymbol(samplesPerThreadLog2_gpu, &constant_tmp, sizeof(int));
-    //TODO dim = size
-    //cudaMemcpyToSymbol(bitrev_lookup_gpu, bitrev_lookup_512, 512*sizeof(uint16_t));
-
-    //thrust::complex<float> W[10*512];
-    //int _2_l = 2;
-    //for (int l = 0; l < 10; l++) {
-    //    for ( int i = 0; i < 512; i++ ) {
-    //        W[l*512 + i] = thrust::complex<float>(cos(2. * PI * i / _2_l), -sin(2. * PI * i / _2_l));
-    //    }
-    //    _2_l *= 2;
-    //}
-    //cudaMemcpyToSymbol(W_gpu, W, 10*512*sizeof(thrust::complex<float>));
-
 
     cudaStream_t* stream = new cudaStream_t[num_slices];
     dim3 grid(size, num_channels);
@@ -306,19 +266,19 @@ int main(int argc, char* argv[]) {
     dim3 block_transpose(32);
 
 	int block_size = 32;
-	dim3 grid_shift(size / 2 / block_size, size / block_size, num_channels);
+	dim3 grid_shift(size / 2 / block_size, size / block_size);
 	dim3 block_shift(block_size, block_size);
 
-    dim3 grid_shift_(size / 2, num_channels);
-    dim3 block_shift_(32, size / 32);
+	dim3 grid_sum(size / block_size, size / block_size);
+	dim3 block_sum(block_size, block_size);
 
     thrust::complex<float>* data_gpu;
     cudaMalloc((void**)&data_gpu, num_slices * num_channels * size * size * sizeof(thrust::complex<float>));
 
     auto start = std::chrono::high_resolution_clock::now();
 
+    //TODO: risultato su array di char per scrivere su file
     for (int slice = 0; slice < num_slices; slice++) {
-        //cout << slice << endl;
         cudaStreamCreate(&stream[slice]);
 
         cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
@@ -326,12 +286,10 @@ int main(int argc, char* argv[]) {
         kernel_fft<<<grid, block, size * sizeof(thrust::complex<float>), stream[slice]>>>(data_gpu + sliceIndex);
 		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex); // (32+1) per evitare bank conflict?
         kernel_fft <<<grid, block, size * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
-        kernel_freq_shift << <grid_shift, block_shift, 0, stream[slice] >> > (data_gpu + sliceIndex);
-        //kernel_shift << <grid_shift_, block_shift_, 0, stream[slice] >> > (data_gpu + sliceIndex);
-
+		kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
+        kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
         cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
-        //cout << slice << endl;
         cudaLaunchHostFunc(stream[slice], streamCallback, nullptr);
 
     }
@@ -347,23 +305,14 @@ int main(int argc, char* argv[]) {
     // questa porzione di codice impiega 98ms per ogni loop
 	// di cui la metà è impiegata per combinare i canali e la metà per scrivere il file
     // necessario ottimizzare su CUDA
-	// se possibile, nuova libreria per scrivere il file
     for (int slice = 0; slice < num_slices; slice++) {
 
         // final vector to store the image
         vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
 
-        // combine the coils
         for (int row = 0; row < size; ++row) {
             for (int col = 0; col < size; ++col) {
-                float sumSquares = 0.0;
-                for (int ch = 0; ch < num_channels; ++ch) {
-                    // Magnitudine del valore complesso per il coil k
-                    float magnitude = abs(data[index(slice,ch,row,col,size,num_channels)]);
-                    sumSquares += magnitude * magnitude;
-                }
-                // Calcola il risultato RSS
-                mri_image[row][col] = sqrt(sumSquares);
+                mri_image[row][col] = data[index(slice, 0, row, col, size, num_channels)].real();
             }
         }
 
