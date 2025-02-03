@@ -21,11 +21,21 @@
     }\
 }
 
+double cpuSecond() {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
+}
+//double iStart = cpuSecond();
+//double iElaps = cpuSecond() - iStart;
+
 #define PI 3.14159265358979323846
 
 #define THREADS_PER_BLOCK 256
 #define ROWS_PER_BLOCK 8
 #define THREADS_PER_ROW (THREADS_PER_BLOCK/ROWS_PER_BLOCK)
+#define SH_MEM_PADDING 1 // Shared memory padding to decrease bank conflicts
+#define WARP_SIZE 32
 
 #define index(slice, ch, row, col, size, n_ch) ((n_ch * size * size * slice) + (size * size * ch) + (size * row) + col)
 
@@ -71,6 +81,8 @@ __device__ uint32_t reverse_bits_gpu(uint32_t x)
     return (x >> 16) | (x << 16);
 }
 
+#define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
+//#define padded(x) (x)
 __global__ void kernel_fft(thrust::complex<float>* data) {
 
 
@@ -80,11 +92,11 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
 
     uint32_t rev = reverse_bits_gpu(i);
     rev = rev >> (32 - sizeLog2_gpu);
-    data_shared[rev] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu];
+    data_shared[padded(rev)] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu];
 
     rev = reverse_bits_gpu(i+size2_gpu);
     rev = rev >> (32 - sizeLog2_gpu);
-    data_shared[rev] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu];
+    data_shared[padded(rev)] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu];
 
 	__syncthreads();
 
@@ -97,7 +109,7 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
         int j = threadIdx.x % mh;
         int kj = k + j;
 
-        thrust::complex<float> a = data_shared[kj];
+        thrust::complex<float> a = data_shared[padded(kj)];
 
         float tr;
         float ti;
@@ -106,16 +118,16 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
         sincosf(-(float)PI * j / mh, &ti, &tr);
         thrust::complex<float> twiddle = thrust::complex<float>(tr, ti);
 
-        thrust::complex<float> b = twiddle * data_shared[kj + mh];
+        thrust::complex<float> b = twiddle * data_shared[padded(kj + mh)];
 
         // Set both halves of the array
-        data_shared[kj] = a + b;
-        data_shared[kj + mh] = a - b;
+        data_shared[padded(kj)] = a + b;
+        data_shared[padded(kj + mh)] = a - b;
 
         __syncthreads();
     }
-    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu] = data_shared[i];
-    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu] = data_shared[i + size2_gpu];
+    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu] = data_shared[padded(i)];
+    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu] = data_shared[padded(i + size2_gpu)];
 }
 
 
@@ -187,7 +199,7 @@ __global__ void kernel_sum(thrust::complex<float>* data) {
 }
 
 int main(int argc, char* argv[]) {
-
+    
     cout << "Lettura del file..." << endl;
 
     string datafile = argv[1];
@@ -205,7 +217,7 @@ int main(int argc, char* argv[]) {
 
     // width and height of the slice
 
-    num_slices = 16;
+    //num_slices = 16;
 
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -283,14 +295,14 @@ int main(int argc, char* argv[]) {
 
         cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
         
-        kernel_fft<<<grid, block, size * sizeof(thrust::complex<float>), stream[slice]>>>(data_gpu + sliceIndex);
-		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex); // (32+1) per evitare bank conflict?
-        kernel_fft <<<grid, block, size * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+		kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
+		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+        kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
 		kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
         kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
         cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
-        cudaLaunchHostFunc(stream[slice], streamCallback, nullptr);
+        //cudaLaunchHostFunc(stream[slice], streamCallback, nullptr);
 
     }
 
