@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
     unsigned int num_channels = acq.active_channels();
     unsigned int num_samples = acq.number_of_samples();
     unsigned int num_slices = num_acquisitions / num_samples;
-	num_slices = 2;
+	//num_slices = 256;
     
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -88,8 +88,7 @@ int main(int argc, char* argv[]) {
     FFT2D_GPU(data, size, num_channels, num_slices/2, 1);
 	FFT2D_GPU(data + (data_size / 2), size, num_channels, num_slices / 2, 1);
 
-    double iElaps = cpuSecond() - iStart;
-	cout << "Elapsed time: " << iElaps << " s" << endl;
+
 
 	for (int slice = 0; slice < num_slices; slice++) {
 
@@ -114,14 +113,16 @@ int main(int argc, char* argv[]) {
         //rotate_90_degrees(mri_image);
 
         // flip 
-        //flipVertical(mri_image, padded_width, padded_height);
-        //flipHorizontal(mri_image, padded_width, padded_height);
+        flipVertical(mri_image, size, size);
+        flipHorizontal(mri_image, size, size);
 
         string magnitudeFile = output_folder + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
 	}
 
+    double iElaps = cpuSecond() - iStart;
+    cout << "Elapsed time: " << iElaps << " s" << endl;
 
 
     return 0;
