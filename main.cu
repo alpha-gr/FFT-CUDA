@@ -66,12 +66,6 @@ __constant__ thrust::complex<float> W_gpu[10*512];
 
 using namespace std;
 
-
-void CUDART_CB streamCallback(void* data) {
-
-    //cout << "FINE" << endl;
-}
-
 __device__ uint32_t reverse_bits_gpu(uint32_t x)
 {
     x = ((x & 0xaaaaaaaa) >> 1) | ((x & 0x55555555) << 1);
@@ -302,8 +296,6 @@ int main(int argc, char* argv[]) {
         kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
         cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
-        //cudaLaunchHostFunc(stream[slice], streamCallback, nullptr);
-
     }
 
     delete[] stream;
