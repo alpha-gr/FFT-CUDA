@@ -15,14 +15,24 @@
 
 #define index(slice, ch, row, col, size, n_ch) (n_ch * size * size * slice) + (size * size * ch) + (size * row) + col
 
+double cpuSecond() {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
+}
 
 using namespace std;
 
-int main() {
+int main(int argc, char* argv[]) {
 
     cout << "Lettura del file..." << endl;
 
-    string datafile = "C:/Users/user/source/repos/FFT/mridata/52c2fd53-d233-4444-8bfd-7c454240d314.h5";
+    if (argc != 3) {
+		cout << "Usage: " << argv[0] << " <input_file> <output_folder>" << endl;
+		return 1;
+    }
+
+	string datafile = argv[1];
 
     ISMRMRD::Dataset d(datafile.c_str(), "dataset", false);
 
@@ -31,9 +41,11 @@ int main() {
 
     ISMRMRD::Acquisition acq;
     d.readAcquisition(0, acq);
-    unsigned int num_channels = acq.active_channels();
-    unsigned int num_samples = acq.number_of_samples();
-    unsigned int num_slices = num_acquisitions / num_samples;
+    int num_channels = acq.active_channels();
+    int num_samples = acq.number_of_samples();
+    int num_slices = num_acquisitions / num_samples;
+
+    num_slices = 16;
 
     // width and height of the slice
 
@@ -42,7 +54,7 @@ int main() {
     cout << "Number of slices: " << num_slices << endl;
 
     // padded array size to perform FFT
-    unsigned int size = next_power_of_two(num_samples);
+    int size = next_power_of_two(num_samples);
 
     cout << "Reading data..." << endl;
 
@@ -72,20 +84,16 @@ int main() {
 
 	cout << "Processing data..." << endl;
 
+    double iStart = cpuSecond();
     for (int slice = 0; slice < num_slices; slice++) {
 
         // 2D IFFT
-        auto start = std::chrono::high_resolution_clock::now();
         for (int channel = 0; channel < num_channels; channel++) {
 
 			FFT2D_GPU( data + index(slice, channel, 0, 0, size, num_channels), 512, 1);
 
             //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
         }
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Tempo impiegato: " << duration_ms.count() << " millisecondi" << std::endl;
-
 
         // final vector to store the image
         vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
@@ -104,19 +112,19 @@ int main() {
             }
         }
 
-
         // rotate the image by 90 degrees
         rotate_90_degrees(mri_image);
 
         // flip 
-        //flipVertical(mri_image, padded_width, padded_height);
-        //flipHorizontal(mri_image, padded_width, padded_height);
+        flipHorizontal(mri_image, size, size);
 
-        string magnitudeFile = "C:/Users/user/source/repos/FFT-CUDA/output/" + to_string(slice) + ".png";
+        string magnitudeFile = argv[2] + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
     } // end for slice
-
+    
+	double iElaps = cpuSecond() - iStart;
+	cout << "Tempo totale: " << iElaps << " secondi" << endl;
 
     return 0;
 
