@@ -34,7 +34,7 @@ double cpuSecond() {
 #define THREADS_PER_BLOCK 256
 #define ROWS_PER_BLOCK 8
 #define THREADS_PER_ROW (THREADS_PER_BLOCK/ROWS_PER_BLOCK)
-#define SH_MEM_PADDING 0 // Shared memory padding to decrease bank conflicts
+#define SH_MEM_PADDING 1 // Shared memory padding to decrease bank conflicts
 #define WARP_SIZE 32
 
 #define index(slice, ch, row, col, size, n_ch) ((n_ch * size * size * slice) + (size * size * ch) + (size * row) + col)
@@ -75,8 +75,8 @@ __device__ uint32_t reverse_bits_gpu(uint32_t x)
     return (x >> 16) | (x << 16);
 }
 
-//#define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
-#define padded(x) (x)
+#define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
+//#define padded(x) (x)
 __global__ void kernel_fft(thrust::complex<float>* data) {
 
 
