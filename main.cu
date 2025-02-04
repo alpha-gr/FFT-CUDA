@@ -124,47 +124,71 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
     data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu] = data_shared[padded(i + size2_gpu)];
 }
 
-#define blockRow blockIdx.y
+#define id threadIdx.x
+#define miniBlockCol threadIdx.y
+#define miniBlockRow threadIdx.z
 #define blockCol blockIdx.x
-#define threadCol threadIdx.x
+#define blockRow blockIdx.y
 #define channelIndex_gpu (blockIdx.z * sizeSq_gpu)
+#define idMod4 (id & 3) //id % 4
+#define idDiv4 (id >> 2) //id / 4
+#define FULL_MASK 0xFFFFFFFF
+#define MASK_0_TO_15 0x0000FFFF
 __global__ void kernel_transpose(thrust::complex<float>* data) {
-    if (blockRow > blockCol) return; //la metà bassa della diagonale non fa niente
 
-    thrust::complex<float> temp;
-    int i, j;
+    const int lookup_table[32] = {
+        16, 20, 24, 28, 17, 21, 25, 29,
+        18, 22, 26, 30, 19, 23, 27, 31,
+        0, 4, 8, 12, 1, 5, 9, 13,
+        2, 6, 10, 14, 3, 7, 11, 15
+    };
 
+    int index;
+    thrust::complex<float> tmp;
+    if (blockRow > blockCol) return;
     if (blockRow == blockCol) {
-        for (i = 0; i < TILE_DIM; i++) {
-            if (threadCol > i) {
-                temp = data[channelIndex_gpu + ((blockRow * TILE_DIM + i) * size_gpu) + (blockCol * TILE_DIM + threadCol)];
-                data[channelIndex_gpu + ((blockRow * TILE_DIM + i) * size_gpu) + (blockCol * TILE_DIM + threadCol)] =
-                    data[channelIndex_gpu + ((blockCol * TILE_DIM + threadCol) * size_gpu) + (blockRow * TILE_DIM + i)];
-                data[channelIndex_gpu + ((blockCol * TILE_DIM + threadCol) * size_gpu) + (blockRow * TILE_DIM + i)] = temp;
-            }
-            else {
-                break;
-            }
+        if (miniBlockRow > miniBlockCol) return;
+        if (miniBlockRow == miniBlockCol) {
+            if (id >= 16) return;
+            index = channelIndex_gpu
+                + (blockRow * 16 + miniBlockRow * 4 + idDiv4) * size_gpu
+                + (blockCol * 16 + miniBlockCol * 4 + idMod4);
+
+            tmp = data[index];
+            tmp.real(__shfl_sync(MASK_0_TO_15, tmp.real(), lookup_table[id + 16], 16));
+            tmp.imag(__shfl_sync(MASK_0_TO_15, tmp.imag(), lookup_table[id + 16], 16));
+            data[index] = tmp;
+            return;
         }
-        return;
     }
 
-    /*
-     *  (BR*32+i)*size+(BC*32+TC) <-> (BC*32+TC)*size+(BR*32+i)
-     */
-    for (i = 0; i < 32; i++) {
-        temp = data[channelIndex_gpu + ((blockRow * TILE_DIM + i) * size_gpu) + (blockCol * TILE_DIM + threadCol)];
-        data[channelIndex_gpu + ((blockRow * TILE_DIM + i) * size_gpu) + (blockCol * TILE_DIM + threadCol)] =
-            data[channelIndex_gpu + ((blockCol * TILE_DIM + threadCol) * size_gpu) + (blockRow * TILE_DIM + i)];
-        data[channelIndex_gpu + ((blockCol * TILE_DIM + threadCol) * size_gpu) + (blockRow * TILE_DIM + i)] = temp;
-
+    if (id < 16) {
+        index = channelIndex_gpu
+            + (blockRow * 16 + miniBlockRow * 4 + idDiv4) * size_gpu
+            + (blockCol * 16 + miniBlockCol * 4 + idMod4);
     }
+    else {
+        index = channelIndex_gpu
+            + (blockCol * 16 + miniBlockCol * 4 + idDiv4 - 4) * size_gpu
+            + (blockRow * 16 + miniBlockRow * 4 + idMod4);
+    }
+
+    tmp = data[index];
+    tmp.real(__shfl_sync(FULL_MASK, tmp.real(), lookup_table[id], 32));
+    tmp.imag(__shfl_sync(FULL_MASK, tmp.imag(), lookup_table[id], 32));
+    data[index] = tmp;
 
 }
-#undef blockRow
+#undef id
+#undef miniBlockCol
+#undef miniBlockRow
 #undef blockCol
-#undef threadCol
+#undef blockRow
 #undef channelIndex_gpu
+#undef idMod4
+#undef idDiv4
+#undef FULL_MASK
+#undef MASK_0_TO_15
 
 __global__ void kernel_freq_shift(thrust::complex<float>* data) {
 	thrust::complex<float> tmp;
@@ -270,8 +294,8 @@ int main(int argc, char* argv[]) {
     dim3 grid(size, num_channels);
     dim3 block(size/2);
 
-    dim3 grid_transpose(size/32, size/32, num_channels);
-    dim3 block_transpose(32);
+    dim3 grid_transpose(size / 4 / 4, size / 4 / 4, num_channels);
+    dim3 block_transpose(32, 4, 4);;
 
 	int block_size = 32;
 	dim3 grid_shift(size / 2 / block_size, size / block_size, num_channels);
@@ -290,7 +314,7 @@ int main(int argc, char* argv[]) {
         cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
         
 		kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
-		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+		kernel_transpose <<<grid_transpose, block_transpose,0, stream[slice] >>> (data_gpu + sliceIndex);
         kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
 		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
         kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
