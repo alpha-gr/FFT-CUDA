@@ -101,6 +101,14 @@ void combineCoils(const vector<vector<vector<complex<float>>>>& coils,
     }
 }
 
+void writePNG(string outDir, int slice, unsigned char* imgData, int size) {
+    if (stbi_write_png((outDir + to_string(slice) + ".png").c_str(), size, size, 1, imgData, size) == 0) {
+        cerr << "Errore nella scrittura dell'immagine in " << outDir + to_string(slice) + ".png" << endl;
+        throw runtime_error("Errore nella scrittura dell'immagine");
+    }
+    cout << "Immagine salvata come " << outDir + to_string(slice) + ".png" << endl;
+}
+
 
 int next_power_of_two(int N) {
     if (N <= 1) return 1; // Edge case for numbers <= 1
