@@ -34,7 +34,7 @@ double cpuSecond() {
 #define THREADS_PER_BLOCK 256
 #define ROWS_PER_BLOCK 8
 #define THREADS_PER_ROW (THREADS_PER_BLOCK/ROWS_PER_BLOCK)
-#define SH_MEM_PADDING 1 // Shared memory padding to decrease bank conflicts
+#define SH_MEM_PADDING 0 // Shared memory padding to decrease bank conflicts
 #define WARP_SIZE 32
 
 #define index(slice, ch, row, col, size, n_ch) ((n_ch * size * size * slice) + (size * size * ch) + (size * row) + col)
@@ -75,8 +75,8 @@ __device__ uint32_t reverse_bits_gpu(uint32_t x)
     return (x >> 16) | (x << 16);
 }
 
-#define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
-//#define padded(x) (x)
+//#define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
+#define padded(x) (x)
 __global__ void kernel_fft(thrust::complex<float>* data) {
 
 
@@ -123,7 +123,6 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
     data[channelIndex_gpu + rowIndex_gpu + threadId_gpu] = data_shared[padded(i)];
     data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu] = data_shared[padded(i + size2_gpu)];
 }
-
 
 #define blockRow blockIdx.y
 #define blockCol blockIdx.x
@@ -173,10 +172,11 @@ __global__ void kernel_freq_shift(thrust::complex<float>* data) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 	int new_row = (row + size2_gpu) % size_gpu;
 	int new_col = (col + size2_gpu) % size_gpu;
+	int channel = blockIdx.z;
 
-	tmp = data[row * size_gpu + col];
-	data[row * size_gpu + col] = data[new_row * size_gpu + new_col];
-	data[new_row * size_gpu + new_col] = tmp;
+	tmp = data[channel * sizeSq_gpu + row * size_gpu + col];
+	data[ channel * sizeSq_gpu + row * size_gpu + col] = data[ channel * sizeSq_gpu + new_row * size_gpu + new_col];
+	data[ channel * sizeSq_gpu + new_row * size_gpu + new_col] = tmp;
 
 }
 
@@ -247,8 +247,10 @@ int main(int argc, char* argv[]) {
         }
 
     }
-    int constant_tmp;
 
+    double iStart = cpuSecond();
+
+    int constant_tmp;
     constant_tmp = num_channels;
     cudaMemcpyToSymbol(numChannels_gpu, &constant_tmp, sizeof(int));
     constant_tmp = size;
@@ -264,66 +266,97 @@ int main(int argc, char* argv[]) {
     constant_tmp = log2(size/THREADS_PER_ROW);
     cudaMemcpyToSymbol(samplesPerThreadLog2_gpu, &constant_tmp, sizeof(int));
 
-    cudaStream_t* stream = new cudaStream_t[num_slices];
+    //cudaStream_t* stream = new cudaStream_t[num_slices];
     dim3 grid(size, num_channels);
     dim3 block(size/2);
 
     dim3 grid_transpose(size/32, size/32, num_channels);
     dim3 block_transpose(32);
 
-	int block_size = 32;
-	dim3 grid_shift(size / 2 / block_size, size / block_size);
-	dim3 block_shift(block_size, block_size);
+	//int block_size = 32;
+	//dim3 grid_shift(size / 2 / block_size, size / block_size);
+	//dim3 block_shift(block_size, block_size);
 
-	dim3 grid_sum(size / block_size, size / block_size);
-	dim3 block_sum(block_size, block_size);
+	//dim3 grid_sum(size / block_size, size / block_size);
+	//dim3 block_sum(block_size, block_size);
 
     thrust::complex<float>* data_gpu;
     cudaMalloc((void**)&data_gpu, num_slices * num_channels * size * size * sizeof(thrust::complex<float>));
 
-    auto start = std::chrono::high_resolution_clock::now();
 
     //TODO: risultato su array di char per scrivere su file
+  //  for (int slice = 0; slice < num_slices; slice++) {
+  //      cudaStreamCreate(&stream[slice]);
+
+  //      cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
+  //      
+		//kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
+		//kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+  //      kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
+  //      kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
+
+  //      cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
+  //  }
+
+    int block_size = 32;
+    dim3 grid_shift(size / 2 / block_size, size / block_size, num_channels);
+    dim3 block_shift(block_size, block_size);
+
+        cudaMemcpy(data_gpu, data, num_slices * num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice);
+
     for (int slice = 0; slice < num_slices; slice++) {
-        cudaStreamCreate(&stream[slice]);
 
-        cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
-        
-		kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
-		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
-        kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
-		kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
-        kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
-        cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
+        kernel_fft << <grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
+        kernel_transpose << <grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
+        kernel_fft << <grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
+        kernel_freq_shift << <grid_shift, block_shift, 0>> > (data_gpu + sliceIndex);
+
     }
 
-    delete[] stream;
+    cudaMemcpyAsync(data, data_gpu, num_slices * num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
+
+    //delete[] stream;
 
     cudaDeviceSynchronize();
 
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Tempo impiegato: " << duration_ms.count() << " millisecondi" << std::endl;
-
-    // questa porzione di codice impiega 98ms per ogni loop
-	// di cui la metà è impiegata per combinare i canali e la metà per scrivere il file
-    // necessario ottimizzare su CUDA
     for (int slice = 0; slice < num_slices; slice++) {
 
         // final vector to store the image
         vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
 
+        // combine the coils
         for (int row = 0; row < size; ++row) {
             for (int col = 0; col < size; ++col) {
-                mri_image[row][col] = data[index(slice, 0, row, col, size, num_channels)].real();
+                float sumSquares = 0.0;
+                for (int ch = 0; ch < num_channels; ++ch) {
+
+                    // Magnitudine del valore complesso per il coil k
+                    float magnitude = abs(data[index(slice, ch, row, col, size, num_channels)]);
+                    sumSquares += magnitude * magnitude;
+                }
+                // Calcola il risultato RSS
+                mri_image[row][col] = sqrt(sumSquares);
+                //if (col == 0) cout << sqrt(sumSquares) << endl;
             }
         }
+
+
+        // rotate the image by 90 degrees
+        //rotate_90_degrees(mri_image);
+
+        // flip
+        flipVertical(mri_image, size, size);
+        flipHorizontal(mri_image, size, size);
 
         string magnitudeFile = argv[2] + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
     } // end for slice
+
+    double iElaps = cpuSecond() - iStart;
+	cout << "Elapsed time: " << iElaps << " s" << endl;
 
 
     return 0;
