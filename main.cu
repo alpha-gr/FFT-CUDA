@@ -266,60 +266,43 @@ int main(int argc, char* argv[]) {
     constant_tmp = log2(size/THREADS_PER_ROW);
     cudaMemcpyToSymbol(samplesPerThreadLog2_gpu, &constant_tmp, sizeof(int));
 
-    //cudaStream_t* stream = new cudaStream_t[num_slices];
+    cudaStream_t* stream = new cudaStream_t[num_slices];
     dim3 grid(size, num_channels);
     dim3 block(size/2);
 
     dim3 grid_transpose(size/32, size/32, num_channels);
     dim3 block_transpose(32);
 
-	//int block_size = 32;
-	//dim3 grid_shift(size / 2 / block_size, size / block_size);
-	//dim3 block_shift(block_size, block_size);
+	int block_size = 32;
+	dim3 grid_shift(size / 2 / block_size, size / block_size, num_channels);
+	dim3 block_shift(block_size, block_size);
 
-	//dim3 grid_sum(size / block_size, size / block_size);
-	//dim3 block_sum(block_size, block_size);
+	dim3 grid_sum(size / block_size, size / block_size);
+	dim3 block_sum(block_size, block_size);
 
     thrust::complex<float>* data_gpu;
     cudaMalloc((void**)&data_gpu, num_slices * num_channels * size * size * sizeof(thrust::complex<float>));
 
 
-    //TODO: risultato su array di char per scrivere su file
-  //  for (int slice = 0; slice < num_slices; slice++) {
-  //      cudaStreamCreate(&stream[slice]);
-
-  //      cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
-  //      
-		//kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
-		//kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
-  //      kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
-		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
-  //      kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
-
-  //      cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
-  //  }
-
-    int block_size = 32;
-    dim3 grid_shift(size / 2 / block_size, size / block_size, num_channels);
-    dim3 block_shift(block_size, block_size);
-
-        cudaMemcpy(data_gpu, data, num_slices * num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice);
-
     for (int slice = 0; slice < num_slices; slice++) {
+        cudaStreamCreate(&stream[slice]);
 
+        cudaMemcpyAsync(data_gpu + sliceIndex, data + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyHostToDevice, stream[slice]);
+        
+		kernel_fft << <grid, block, (size + (size/WARP_SIZE)*SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >> > (data_gpu + sliceIndex);
+		kernel_transpose <<<grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+        kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
+		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
+        kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
-        kernel_fft << <grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
-        kernel_transpose << <grid_transpose, block_transpose, 32 * 32 * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
-        kernel_fft << <grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>)>> > (data_gpu + sliceIndex);
-        kernel_freq_shift << <grid_shift, block_shift, 0>> > (data_gpu + sliceIndex);
-
+        cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
+		cudaStreamDestroy(stream[slice]);
     }
 
-    cudaMemcpyAsync(data, data_gpu, num_slices * num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost);
-
-    //delete[] stream;
+    delete[] stream;
 
     cudaDeviceSynchronize();
+    cudaFree(data_gpu);
 
     for (int slice = 0; slice < num_slices; slice++) {
 
