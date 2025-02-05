@@ -244,13 +244,13 @@ __global__ void kernel_max(float* data) {
     }
     data[0] = shared_data[0];
 }
-__global__ void kernel_tochar(thrust::complex<float>* data, float* _max, unsigned char* imgData) {
-    float max = *_max;
-    imgData[(size_gpu -1 - blockIdx.x) * size_gpu + (size_gpu -1 - threadIdx.x)] = (unsigned char)((data[(blockIdx.x) * size_gpu + (threadIdx.x)].real() / max) * 255);
+__global__ void kernel_tochar(const thrust::complex<float>* __restrict__ data, const float* __restrict__ max, unsigned char* imgData) {
+   
+    imgData[(size_gpu -1 - blockIdx.x) * size_gpu + (size_gpu -1 - threadIdx.x)] = (unsigned char)((data[(blockIdx.x) * size_gpu + (threadIdx.x)].real() / *max) * 255);
 }
 
 __global__ void kernel_shiftToChar(const thrust::complex<float>* __restrict__ data, const float* __restrict__ max, unsigned char* imgData) {
-    imgData[((rowId + size2_gpu) % size_gpu) * size_gpu + ((colId + size2_gpu) % size_gpu)] = (unsigned char)((data[rowId * size_gpu + colId].real() / *max) * 255);
+    imgData[(size_gpu - 1 - ((rowId + size2_gpu) % size_gpu)) * size_gpu + (size_gpu - 1 - ((colId + size2_gpu) % size_gpu))] = (unsigned char)((data[rowId * size_gpu + colId].real() / *max) * 255);
 }
 #undef colId
 #undef rowId
@@ -389,13 +389,13 @@ int main(int argc, char* argv[]) {
         kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
 
 		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
-        kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
+        //kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
 
         kernel_combineChannels << <size, size, size * sizeof(float), stream[slice] >> > (data_gpu + sliceIndex, tmpMax_gpu + slice * size);
         kernel_max << <1, size / 2, size * sizeof(float), stream[slice] >> > (tmpMax_gpu + slice * size);
 
-        kernel_tochar<<<size, size, 0, stream[slice]>>>(data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size*size);
-        //kernel_shiftToChar << <size, size, 0, stream[slice] >> > (data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size * size);
+        //kernel_tochar<<<size, size, 0, stream[slice]>>>(data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size*size);
+        kernel_shiftToChar << <size, size, 0, stream[slice] >> > (data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size * size);
 
         cudaMemcpyAsync(imgData + slice * size * size, imgData_gpu + slice * size * size, size * size * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream[slice]);
 
@@ -408,8 +408,7 @@ int main(int argc, char* argv[]) {
     cudaDeviceSynchronize();
     cudaFree(data_gpu);
 
-    double iElaps = cpuSecond() - iStart;
-    cout << "Elapsed time: " << iElaps << " s" << endl;
+    
 
 	vector<thread> threads;
     for (int slice = 0; slice < num_slices; slice++) {
@@ -420,6 +419,8 @@ int main(int argc, char* argv[]) {
         threads[slice].join();
     }
 
+    double iElaps = cpuSecond() - iStart;
+    cout << "Elapsed time: " << iElaps << " s" << endl;
     //for (int slice = 0; slice < num_slices; slice++) {
 
     //    // final vector to store the image
