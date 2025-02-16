@@ -27,8 +27,6 @@ double cpuSecond() {
     timespec_get(&ts, TIME_UTC);
     return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
 }
-//double iStart = cpuSecond();
-//double iElaps = cpuSecond() - iStart;
 
 #define PI 3.14159265358979323846
 
@@ -67,41 +65,39 @@ __constant__ thrust::complex<float> W_gpu[10*512];
 
 using namespace std;
 
-__device__ uint32_t reverse_bits_gpu(uint32_t x)
+__device__ uint32_t reverse_bits_gpu(uint32_t x, int sizeLog2)
 {
     x = ((x & 0xaaaaaaaa) >> 1) | ((x & 0x55555555) << 1);
     x = ((x & 0xcccccccc) >> 2) | ((x & 0x33333333) << 2);
     x = ((x & 0xf0f0f0f0) >> 4) | ((x & 0x0f0f0f0f) << 4);
     x = ((x & 0xff00ff00) >> 8) | ((x & 0x00ff00ff) << 8);
-    return (x >> 16) | (x << 16);
+    x = (x >> 16) | (x << 16);
+	return x >> (32 - sizeLog2);
 }
 
 #define padded(x) ((x) + ((x)/WARP_SIZE)*SH_MEM_PADDING)
 //#define padded(x) (x)
 __global__ void kernel_fft(thrust::complex<float>* data) {
 
-
-    uint32_t i = threadId_gpu;
+    uint32_t i = threadIdx.x;
+	int idx = channelIndex_gpu + rowIndex_gpu + threadIdx.x;
 
     extern __shared__  thrust::complex<float> data_shared[];
 
-    uint32_t rev = reverse_bits_gpu(i);
-    rev = rev >> (32 - sizeLog2_gpu);
-    data_shared[padded(rev)] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu];
+    uint32_t rev1 = reverse_bits_gpu(i, sizeLog2_gpu);
+    uint32_t rev2 = reverse_bits_gpu(i+size2_gpu, sizeLog2_gpu);
 
-    rev = reverse_bits_gpu(i+size2_gpu);
-    rev = rev >> (32 - sizeLog2_gpu);
-    data_shared[padded(rev)] = data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu];
+    data_shared[padded(rev1)] = data[idx];
+    data_shared[padded(rev2)] = data[idx + size2_gpu];
 
 	__syncthreads();
 
-    for (int s = 1; s <= sizeLog2_gpu; s++) {
-        int mh = 1 << (s - 1);  // 2 ** (s - 1)
+    for (int level = 1, step=1; level <= sizeLog2_gpu; level++, step*=2) {
 
         // k = 2**s * (2*i // 2**(s-1))  for i=0..N/2-1
         // j = i % (2**(s - 1))  for i=0..N/2-1
-        int k = threadIdx.x / mh * (1 << s);
-        int j = threadIdx.x % mh;
+        int k = threadIdx.x / step * (1 << level);
+        int j = threadIdx.x % step;
         int kj = k + j;
 
         thrust::complex<float> a = data_shared[padded(kj)];
@@ -110,19 +106,19 @@ __global__ void kernel_fft(thrust::complex<float>* data) {
         float ti;
 
         // Compute the sine and cosine to find this thread's twiddle factor.
-        sincosf(-(float)PI * j / mh, &ti, &tr);
+        sincosf(-(float)PI * j / step, &ti, &tr);
         thrust::complex<float> twiddle = thrust::complex<float>(tr, ti);
 
-        thrust::complex<float> b = twiddle * data_shared[padded(kj + mh)];
+        thrust::complex<float> b = twiddle * data_shared[padded(kj + step)];
 
         // Set both halves of the array
         data_shared[padded(kj)] = a + b;
-        data_shared[padded(kj + mh)] = a - b;
+        data_shared[padded(kj + step)] = a - b;
 
         __syncthreads();
     }
-    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu] = data_shared[padded(i)];
-    data[channelIndex_gpu + rowIndex_gpu + threadId_gpu + size2_gpu] = data_shared[padded(i + size2_gpu)];
+    data[idx] = data_shared[padded(i)];
+    data[idx + size2_gpu] = data_shared[padded(i + size2_gpu)];
 }
 
 #define id threadIdx.x
@@ -300,7 +296,7 @@ int main(int argc, char* argv[]) {
 
     // width and height of the slice
 
-    //num_slices = 16;
+    num_slices = 16;
 
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
@@ -388,18 +384,13 @@ int main(int argc, char* argv[]) {
 		kernel_transpose <<<grid_transpose, block_transpose,0, stream[slice] >>> (data_gpu + sliceIndex);
         kernel_fft <<<grid, block, (size + (size / WARP_SIZE) * SH_MEM_PADDING) * sizeof(thrust::complex<float>), stream[slice] >>> (data_gpu + sliceIndex);
 
-		//kernel_sum << <grid_sum, block_sum, 0, stream[slice] >> > (data_gpu + sliceIndex);
-        //kernel_freq_shift <<<grid_shift, block_shift, 0, stream[slice] >>> (data_gpu + sliceIndex);
-
         kernel_combineChannels << <size, size, size * sizeof(float), stream[slice] >> > (data_gpu + sliceIndex, tmpMax_gpu + slice * size);
         kernel_max << <1, size / 2, size * sizeof(float), stream[slice] >> > (tmpMax_gpu + slice * size);
 
-        //kernel_tochar<<<size, size, 0, stream[slice]>>>(data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size*size);
         kernel_shiftToChar << <size, size, 0, stream[slice] >> > (data_gpu + sliceIndex, tmpMax_gpu + slice * size, imgData_gpu + slice * size * size);
 
         cudaMemcpyAsync(imgData + slice * size * size, imgData_gpu + slice * size * size, size * size * sizeof(unsigned char), cudaMemcpyDeviceToHost, stream[slice]);
 
-        //cudaMemcpyAsync(data + sliceIndex, data_gpu + sliceIndex, num_channels * size * size * sizeof(thrust::complex<float>), cudaMemcpyDeviceToHost, stream[slice]);
 		cudaStreamDestroy(stream[slice]);
     }
 
@@ -408,8 +399,10 @@ int main(int argc, char* argv[]) {
     cudaDeviceSynchronize();
     cudaFree(data_gpu);
 
-    
 
+    double iElaps = cpuSecond() - iStart;
+    cout << "Elapsed time: " << iElaps << " s" << endl;
+    
 	vector<thread> threads;
     for (int slice = 0; slice < num_slices; slice++) {
         threads.emplace_back(writePNG, argv[2], slice, imgData + slice * size * size, size);
@@ -418,42 +411,6 @@ int main(int argc, char* argv[]) {
     for (int slice = 0; slice < num_slices; slice++) {
         threads[slice].join();
     }
-
-    double iElaps = cpuSecond() - iStart;
-    cout << "Elapsed time: " << iElaps << " s" << endl;
-    //for (int slice = 0; slice < num_slices; slice++) {
-
-    //    // final vector to store the image
-    //    vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
-
-    //    // combine the coils
-    //    for (int row = 0; row < size; ++row) {
-    //        for (int col = 0; col < size; ++col) {
-    //            float sumSquares = 0.0;
-    //            for (int ch = 0; ch < num_channels; ++ch) {
-
-    //                // Magnitudine del valore complesso per il coil k
-    //                float magnitude = abs(data[index(slice, ch, row, col, size, num_channels)]);
-    //                sumSquares += magnitude * magnitude;
-    //            }
-    //            // Calcola il risultato RSS
-    //            mri_image[row][col] = sqrt(sumSquares);
-    //            //if (col == 0) cout << sqrt(sumSquares) << endl;
-    //        }
-    //    }
-
-
-    //    // rotate the image by 90 degrees
-    //    //rotate_90_degrees(mri_image);
-
-    //    // flip
-    //    flipVertical(mri_image, size, size);
-    //    flipHorizontal(mri_image, size, size);
-
-    //    string magnitudeFile = argv[2] + to_string(slice) + ".png";
-
-    //    write_to_png(mri_image, magnitudeFile);
-    //} // end for slice
 
     return 0;
 

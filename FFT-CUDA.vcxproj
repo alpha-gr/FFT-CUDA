@@ -128,11 +128,9 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="fft-v2-cuda.cu" />
     <CudaCompile Include="main.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="fft-v2-cuda.cuh" />
     <ClInclude Include="lookup_tables.h" />
     <ClInclude Include="stb_image_write.h" />
     <ClInclude Include="utils.h" />
