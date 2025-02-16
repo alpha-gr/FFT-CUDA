@@ -2,6 +2,47 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+void write_to_bmp(vector<vector<float>> data, string outfile) {
+
+    char* filename = const_cast<char*>(outfile.c_str());
+    int rows = data.size();
+    int cols = data[0].size();
+
+    // Crea un array di byte per l'immagine
+    vector<unsigned char> imageData(rows * cols);
+
+    // trova la massima magnitudine per normalizzare i valori
+    float maxMagnitude = 0;
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            if (data[i][j] > maxMagnitude) {
+                maxMagnitude = data[i][j];
+            }
+        }
+    }
+
+    // Normalizza le magnitudini e converte in byte
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            unsigned char pixelValue = static_cast<unsigned char>((data[i][j] / maxMagnitude) * 255);
+            imageData[i * cols + j] = pixelValue;
+        }
+    }
+
+
+    // Scrive il risultato come PNG
+    //if (stbi_write_png(filename, cols, rows, 1, imageData.data(), cols) == 0) {
+    //    cerr << "Errore nella scrittura dell'immagine in " << filename << endl;
+    //    throw runtime_error("Errore nella scrittura dell'immagine");
+    //}
+    if (stbi_write_bmp(filename, cols, rows, 1, imageData.data()) == 0) {
+        cerr << "Errore nella scrittura dell'immagine in " << filename << endl;
+        throw runtime_error("Errore nella scrittura dell'immagine");
+    }
+
+    cout << "Immagine salvata come " << filename << endl;
+}
+
 void write_to_png(vector<vector<float>> data, string outfile) {
 
     char* filename = const_cast<char*>(outfile.c_str());
@@ -58,6 +99,14 @@ void combineCoils(const vector<vector<vector<complex<float>>>>& coils,
             image[i][j] = sqrt(sumSquares);
         }
     }
+}
+
+void writePNG(string outDir, int slice, unsigned char* imgData, int size) {
+    if (stbi_write_png((outDir + to_string(slice) + ".png").c_str(), size, size, 1, imgData, size) == 0) {
+        cerr << "Errore nella scrittura dell'immagine in " << outDir + to_string(slice) + ".png" << endl;
+        throw runtime_error("Errore nella scrittura dell'immagine");
+    }
+    cout << "Immagine salvata come " << outDir + to_string(slice) + ".png" << endl;
 }
 
 

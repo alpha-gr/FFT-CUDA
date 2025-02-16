@@ -1,4 +1,6 @@
 
+#pragma once
+#include "thrust/complex.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdio.h>
@@ -10,14 +12,28 @@
 #include "ismrmrd/xml.h"
 #include "utils.h"
 #include "fft-v2-cuda.cuh"
+#include <time.h>
+
+double cpuSecond() {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
+}
+
+#define index(slice, ch, row, col, size, n_ch) (n_ch * size * size * slice) + (size * size * ch) + (size * row) + col
+
 
 using namespace std;
 
-int main() {
+int main(int argc, char* argv[]) {
 
-    cout << "Lettura del file..." << endl;
+	if (argc != 3) {
+		cout << "Usage: " << argv[0] << " <input_file> <output_folder>" << endl;
+		return 1;
+	}
 
-    string datafile = "C:/Users/user/source/repos/FFT/mridata/52c2fd53-d233-4444-8bfd-7c454240d314.h5";
+	string datafile = argv[1];
+	string output_folder = argv[2];
 
     ISMRMRD::Dataset d(datafile.c_str(), "dataset", false);
 
@@ -29,95 +45,83 @@ int main() {
     unsigned int num_channels = acq.active_channels();
     unsigned int num_samples = acq.number_of_samples();
     unsigned int num_slices = num_acquisitions / num_samples;
-
-    // width and height of the slice
-    unsigned int width = num_samples;
-    unsigned int height = num_samples;
-
+	num_slices = 2;
+    
     cout << "Number of channels: " << num_channels << endl;
     cout << "Number of samples: " << num_samples << endl;
     cout << "Number of slices: " << num_slices << endl;
 
-    cout << "width: " << width << endl;
-    cout << "height: " << height << endl;
+    // padded array size to perform FFT
+    unsigned int size = next_power_of_two(num_samples);
 
-    // 3D array to store the multi channel slice data
-    // num_channels x width x height
-    vector<vector<vector<complex<float>>>> slice_channels(num_channels,
-        vector<vector<complex<float>>>(width,
-            vector<complex<float>>(height, { 0.0f, 0.0f })));
+    cout << "Reading data..." << endl;
 
-    // padded array to perform FFT
-    unsigned int padded_width = next_power_of_two(width);
-    unsigned int padded_height = next_power_of_two(height);
+    thrust::complex<float>* data;
+	data = (thrust::complex<float>*)malloc(size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
+	memset(data, 0, size * size * num_slices * num_channels * sizeof(thrust::complex<float>));
 
-    vector<vector<vector<complex<float>>>> slice_channels_padded(num_channels,
-        vector<vector<complex<float>>>(padded_width,
-            vector<complex<float>>(padded_height, { 0.0f, 0.0f })));
+    //reading all the data with padding
 
-    cout << "Processing data..." << endl;
-    // Read the data from the acquisitions
+	complex<float> tmp = complex<float>(0.0, 0.0);
+	int pad = (size - num_samples) / 2;
 
-    
-
-    //num_slices = 10; // for testing purposes
-    for (unsigned int slice = 0; slice < num_slices; slice++) {
-
-        // Read the data for the current slice
-        for (unsigned int j = 0; j < num_samples; j++) {
-            d.readAcquisition(slice * num_samples + j, acq);
-            for (unsigned int channel = 0; channel < num_channels; channel++) {
-                for (unsigned int i = 0; i < num_samples; i++) {
-                    slice_channels[channel][j][i] = acq.data(i, channel);
+    for (int slice = 0; slice < num_slices; slice++) {
+        for (int row = 0; row < num_samples; row++) {
+			d.readAcquisition(slice * num_samples + row, acq);
+            for (int channel = 0; channel < num_channels; channel++) {
+                for (int col = 0; col < num_samples; col++) {
+                    tmp = acq.data(col, channel);
+					data[index(slice, channel, (row+pad), (col+pad), size, num_channels)] = thrust::complex<float>(tmp.real(), tmp.imag());
                 }
             }
         }
+    
+    }
 
+	cout << "Processing data..." << endl;
 
-        for (unsigned int channel = 0; channel < num_channels; channel++) {
-            slice_channels_padded[channel] = pad_vector(slice_channels[channel]);
-        }
+	unsigned int data_size = size * size * num_slices * num_channels;
 
+    double iStart = cpuSecond();
 
-        // 2D IFFT
-        auto start = std::chrono::high_resolution_clock::now();
-        for (unsigned int channel = 0; channel < num_channels; channel++) {
+	//FFT2D_GPU(data, size, num_channels, num_slices, 1);
+    FFT2D_GPU(data, size, num_channels, num_slices/2, 1);
+	FFT2D_GPU(data + (data_size / 2), size, num_channels, num_slices / 2, 1);
 
-            // TODO rimuovere la costante 512
-            complex<float>** data = new complex<float>*[512];
+    double iElaps = cpuSecond() - iStart;
+	cout << "Elapsed time: " << iElaps << " s" << endl;
 
-            for (size_t i = 0; i < 512; ++i) {
-                data[i] = slice_channels_padded[channel][i].data();
-            }
+	for (int slice = 0; slice < num_slices; slice++) {
 
-			FFT2D_GPU(data, 512, 1);
-
-            //FFT_SHIFT(slice_channels_padded[channel], padded_width, padded_height);
-			delete[] data;
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Tempo impiegato: " << duration_ms.count() << " millisecondi" << std::endl;
-
-
-        // final vector to store the image
-        vector<vector<float>> mri_image(padded_width, vector<float>(padded_height, 0.0));
+		// final vector to store the image
+        vector<vector<float>> mri_image(size, vector<float>(size, 0.0));
 
         // combine the coils
-        combineCoils(slice_channels_padded, mri_image, padded_width, padded_height, num_channels);
-
+        for (int row = 0; row < size; ++row) {
+            for (int col = 0; col < size; ++col) {
+                float sumSquares = 0.0;
+                for (int ch = 0; ch < num_channels; ++ch) {
+                    // Magnitudine del valore complesso
+                    float magnitude = abs(data[index(slice, ch, row, col, size, num_channels)]);
+                    sumSquares += magnitude * magnitude;
+                }
+                // Calcola il risultato RSS
+                mri_image[row][col] = sqrt(sumSquares);
+            }
+        }
 
         // rotate the image by 90 degrees
-        rotate_90_degrees(mri_image);
+        //rotate_90_degrees(mri_image);
 
         // flip 
         //flipVertical(mri_image, padded_width, padded_height);
         //flipHorizontal(mri_image, padded_width, padded_height);
 
-        string magnitudeFile = "C:/Users/user/source/repos/FFT-CUDA/output/" + to_string(slice) + ".png";
+        string magnitudeFile = output_folder + to_string(slice) + ".png";
 
         write_to_png(mri_image, magnitudeFile);
-    } // end for slice
+	}
+
 
 
     return 0;
