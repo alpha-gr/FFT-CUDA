@@ -9,7 +9,7 @@ The application processes raw k-space MRI data and reconstructs the correspondin
 The goal of this project is to optimize the performance of the IFFT algorithm and the entire processing pipeline—including data loading, memory management, and additional computations—using CUDA.
 
 ## Input Data 
-The input data must be in the MRD format (from [mridata.org](https://www.mridata.org/)). The ISMRMRD library is used to parse and process the data.
+The input data must be in the MRD format (from [mridata.org](http://www.mridata.org/)). The ISMRMRD library is used to parse and process the data.
 
 ## Implemented Operations  
 - 2D Inverse FFT (Cooley-Tukey Algorithm)  
